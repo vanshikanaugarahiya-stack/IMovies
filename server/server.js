@@ -59,7 +59,50 @@ app.listen(PORT, () => {
   console.log(`[Server] IMovies backend listening on http://localhost:${PORT}`);
 });
 
-// Connect to MongoDB
-connectDB().catch((err) => {
-  console.warn(`[Server] Server is running without active DB connection. Update MONGO_URI in server/.env`);
-});
+// Connect to MongoDB with automated, collision-safe retry loop
+let retryTimer = null;
+let isShuttingDown = false;
+
+const startDBConnection = async () => {
+  if (isShuttingDown) return;
+
+  // Prevent duplicate connection attempts if already connected or in-flight
+  if (mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
+    return;
+  }
+
+  try {
+    await connectDB();
+  } catch (err) {
+    if (isShuttingDown) return;
+    console.warn('[Server] MongoDB connection attempt failed. Retrying in 10 seconds...');
+    retryTimer = setTimeout(startDBConnection, 10000);
+  }
+};
+
+startDBConnection();
+
+// Graceful shutdown handling for cloud containers (Render SIGTERM / SIGINT)
+const gracefulShutdown = async (signal) => {
+  console.log(`[Server] Received ${signal}. Cleaning up resources...`);
+  isShuttingDown = true;
+
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  try {
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close(false);
+      console.log('[MongoDB] Connection closed gracefully.');
+    }
+    process.exit(0);
+  } catch (err) {
+    console.error('[Server Error] Error during graceful shutdown:', err.message);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
