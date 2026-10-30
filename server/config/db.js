@@ -1,8 +1,13 @@
 const mongoose = require('mongoose');
 
-// Helper to expand mongodb+srv URI to direct shard seeds if SRV DNS times out in cloud containers
+// Helper to clean formatting and expand mongodb+srv URI to direct shard seeds
 const resolveMongoUri = (rawUri) => {
   let uri = (rawUri || '').trim().replace(/^["']|["']$/g, '');
+
+  // Strip accidental angle brackets around password if present (e.g. :<password>@ -> :password@)
+  uri = uri.replace(/:<([^>]+)>@/, function (m, p) {
+    return ':' + p + '@';
+  });
 
   if (uri.startsWith('mongodb+srv://') && uri.includes('cluster0.wfe6x5k.mongodb.net')) {
     const directSeed = uri
