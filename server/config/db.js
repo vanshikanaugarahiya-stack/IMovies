@@ -1,25 +1,52 @@
 const mongoose = require('mongoose');
 
+// Helper to expand mongodb+srv URI to direct shard seeds if SRV DNS times out in cloud containers
+const resolveMongoUri = (rawUri) => {
+  let uri = (rawUri || '').trim().replace(/^["']|["']$/g, '');
+
+  if (uri.startsWith('mongodb+srv://') && uri.includes('cluster0.wfe6x5k.mongodb.net')) {
+    const directSeed = uri
+      .replace('mongodb+srv://', 'mongodb://')
+      .replace(
+        'cluster0.wfe6x5k.mongodb.net',
+        'ac-ighhr0h-shard-00-00.wfe6x5k.mongodb.net:27017,ac-ighhr0h-shard-00-01.wfe6x5k.mongodb.net:27017,ac-ighhr0h-shard-00-02.wfe6x5k.mongodb.net:27017'
+      );
+    const hasQuery = directSeed.includes('?');
+    const params = [];
+    if (!directSeed.includes('ssl=')) params.push('ssl=true');
+    if (!directSeed.includes('replicaSet=')) params.push('replicaSet=atlas-x9gq7k-shard-0');
+    if (!directSeed.includes('authSource=')) params.push('authSource=admin');
+
+    if (params.length > 0) {
+      return directSeed + (hasQuery ? '&' : '?') + params.join('&');
+    }
+    return directSeed;
+  }
+
+  return uri;
+};
+
 const connectDB = async () => {
   try {
-    const mongoUri = process.env.MONGO_URI;
+    const rawUri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
-    if (!mongoUri) {
+    if (!rawUri) {
       throw new Error('MONGO_URI is not defined in environment variables');
     }
 
-    const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 15000, // 15s timeout for cloud container cold starts
+    const resolvedUri = resolveMongoUri(rawUri);
+
+    const conn = await mongoose.connect(resolvedUri, {
+      serverSelectionTimeoutMS: 15000,
     });
 
     console.log(`[MongoDB] Connected successfully to Atlas host: ${conn.connection.host}`);
     console.log(`[MongoDB] Database Name: ${conn.connection.name}`);
     return conn;
   } catch (error) {
-    // Sanitize any credential URI before logging
     const safeError = error.message.replace(/:\/\/[^@]+@/, '://***:***@');
     console.error(`[MongoDB Error] Connection failed: ${safeError}`);
-    throw error;
+    throw new Error(safeError);
   }
 };
 

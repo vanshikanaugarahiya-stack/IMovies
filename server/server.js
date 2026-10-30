@@ -23,11 +23,21 @@ app.use('/api/auth', authRoutes);
 app.use('/api/movies', movieRoutes);
 app.use('/api/bookings', bookingRoutes);
 
-// Health check endpoint
+// Health check endpoint with database diagnostics
+let lastDbError = null;
+
 app.get('/api/health', (req, res) => {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const stateIndex = mongoose.connection.readyState;
   res.status(200).json({
     status: 'success',
     message: 'IMovies Backend API is running successfully!',
+    database: {
+      status: states[stateIndex] || 'unknown',
+      connected: stateIndex === 1,
+      hasMongoUri: Boolean(process.env.MONGO_URI && process.env.MONGO_URI.trim()),
+      lastError: lastDbError,
+    },
     timestamp: new Date().toISOString(),
   });
 });
@@ -74,7 +84,9 @@ const startDBConnection = async () => {
 
   try {
     await connectDB();
+    lastDbError = null;
   } catch (err) {
+    lastDbError = err.message ? err.message.replace(/:\/\/[^@]+@/, '://***:***@') : 'Unknown connection error';
     if (isShuttingDown) return;
     console.warn('[Server] MongoDB connection attempt failed. Retrying in 10 seconds...');
     retryTimer = setTimeout(startDBConnection, 10000);
